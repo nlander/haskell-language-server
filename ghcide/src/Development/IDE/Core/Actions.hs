@@ -35,8 +35,8 @@ import qualified HieDb
 import qualified Language.LSP.Server                  as LSP
 import           Language.LSP.Types                   (DocumentHighlight (..),
                                                        SymbolInformation (..))
-import           System.Directory                     (doesFileExist)
-import           System.FilePath                      ((</>))
+import           System.Directory                     (createDirectoryIfMissing, doesFileExist)
+import           System.FilePath                      ((</>), takeDirectory)
 
 
 -- | Generates URIs for files in dependencies, but not in the
@@ -48,13 +48,13 @@ lookupMod
   -> Unit
   -> Bool -- ^ Is this file a boot file?
   -> MaybeT IdeAction Uri
-lookupMod _dbchan hieFile moduleName _uid _boot = MaybeT $ do
+lookupMod _dbchan hieFile moduleName uid _boot = MaybeT $ do
   mProjectRoot <- (LSP.resRootPath =<<) <$> asks lspEnv
   case mProjectRoot of
     Nothing -> pure Nothing
     Just projectRoot -> do
       let toFilePath :: ModuleName -> FilePath
-          toFilePath = separateDirectories . show
+          toFilePath = separateDirectories . prettyModuleName
             where
               separateDirectories :: FilePath -> FilePath
               separateDirectories moduleNameString =
@@ -66,8 +66,14 @@ lookupMod _dbchan hieFile moduleName _uid _boot = MaybeT $ do
               replaceDotWithSpace :: Char -> Char
               replaceDotWithSpace '.' = ' '
               replaceDotWithSpace c = c
+              prettyModuleName :: ModuleName -> String
+              prettyModuleName = filter (/= '"')
+                . concat
+                . drop 1
+                . words
+                . show
           writeOutDir :: FilePath
-          writeOutDir = projectRoot </> ".hls" </> "dependencies"
+          writeOutDir = projectRoot </> ".hls" </> "dependencies" </> show uid
           writeOutFile :: FilePath
           writeOutFile = toFilePath moduleName ++ ".hs"
           writeOutPath :: FilePath
@@ -80,6 +86,7 @@ lookupMod _dbchan hieFile moduleName _uid _boot = MaybeT $ do
       else do
         nc <- asks ideNc
         liftIO $ do
+          createDirectoryIfMissing True $ takeDirectory writeOutPath
           moduleSource <- hie_hs_src <$> loadHieFile (mkUpdater nc) hieFile
           BS.writeFile writeOutPath moduleSource
         pure $ Just moduleUri
