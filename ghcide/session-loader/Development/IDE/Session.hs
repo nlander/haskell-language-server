@@ -427,7 +427,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
   filesMap <- newVar HM.empty :: IO (Var FilesMap)
   -- Version of the mappings above
   version <- newVar 0
-  let returnWithVersion fun = IdeGhcSession fun <$> liftIO (readVar version)
+  let returnWithVersion hiedw fun = IdeGhcSession fun hiedw <$> liftIO (readVar version)
   -- This caches the mapping from Mod.hs -> hie.yaml
   cradleLoc <- liftIO $ memoIO $ \v -> do
       res <- findCradle v
@@ -441,7 +441,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
   runningCradle <- newVar dummyAs :: IO (Var (Async (IdeResult HscEnvEq,[FilePath])))
 
   return $ do
-    extras@ShakeExtras{restartShakeSession, ideNc, knownTargetsVar, lspEnv
+    extras@ShakeExtras{restartShakeSession, ideNc, knownTargetsVar, lspEnv, hiedbWriter
                       } <- getShakeExtras
     let invalidateShakeCache :: IO ()
         invalidateShakeCache = do
@@ -700,7 +700,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
             sessionOpts (join cachedHieYamlLocation <|> hieYaml, file) `Safe.catch` \e ->
                 return (([renderPackageSetupException file e], Nothing), maybe [] pure hieYaml)
 
-    returnWithVersion $ \file -> do
+    returnWithVersion hiedbWriter $ \file -> do
       opts <- liftIO $ join $ mask_ $ modifyVar runningCradle $ \as -> do
         -- If the cradle is not finished, then wait for it to finish.
         void $ wait as
