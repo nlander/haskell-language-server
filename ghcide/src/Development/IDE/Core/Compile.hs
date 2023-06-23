@@ -880,9 +880,8 @@ spliceExpressions Splices{..} =
 -- TVar to 0 in order to set it up for a fresh indexing session. Otherwise, we
 -- can just increment the 'indexCompleted' TVar and exit.
 --
-indexHieFile :: ShakeExtras -> ModSummary -> NormalizedFilePath -> Util.Fingerprint -> Compat.HieFile -> IO ()
-indexHieFile se mod_summary srcPath !hash hf = do
- IdeOptions{optProgressStyle} <- getIdeOptionsIO se
+indexHieFile :: ProgressReportingStyle -> IdeTesting -> ShakeOnlyExtras -> FilePath -> NormalizedFilePath -> Util.Fingerprint -> Compat.HieFile -> IO ()
+indexHieFile optProgressStyle ideTesting soe targetPath srcPath !hash hf =
  atomically $ do
   pending <- readTVar indexPending
   case HashMap.lookup srcPath pending of
@@ -906,9 +905,7 @@ indexHieFile se mod_summary srcPath !hash hf = do
           bracket_ (pre optProgressStyle) post $
             withHieDb (\db -> HieDb.addRefsFromLoaded db targetPath (HieDb.RealFile $ fromNormalizedFilePath srcPath) hash hf')
   where
-    mod_location    = ms_location mod_summary
-    targetPath      = Compat.ml_hie_file mod_location
-    HieDbWriter{..} = hiedbWriter se
+    HieDbWriter{..} = soeHiedbWriter soe
 
     -- Get a progress token to report progress and update it for the current file
     pre style = do
@@ -916,7 +913,7 @@ indexHieFile se mod_summary srcPath !hash hf = do
         x@(Just _) -> pure x
         -- Create a token if we don't already have one
         Nothing -> do
-          case lspEnv se of
+          case soeLspEnv soe of
             Nothing -> pure Nothing
             Just env -> LSP.runLspT env $ do
               u <- LSP.ProgressTextToken . T.pack . show . hashUnique <$> liftIO Unique.newUnique
@@ -941,7 +938,7 @@ indexHieFile se mod_summary srcPath !hash hf = do
         progressPct :: LSP.UInt
         progressPct = floor $ 100 * progressFrac
 
-      whenJust (lspEnv se) $ \env -> whenJust tok $ \tok -> LSP.runLspT env $
+      whenJust (soeLspEnv soe) $ \env -> whenJust tok $ \tok -> LSP.runLspT env $
         LSP.sendNotification LSP.SProgress $ LSP.ProgressParams tok $
           LSP.Report $
             case style of
@@ -972,13 +969,13 @@ indexHieFile se mod_summary srcPath !hash hf = do
         -- If we are done, report and reset completed
         whenMaybe (HashMap.null pending) $
           swapTVar indexCompleted 0
-      whenJust (lspEnv se) $ \env -> LSP.runLspT env $
-        when (coerce $ ideTesting se) $
+      whenJust (soeLspEnv soe) $ \env -> LSP.runLspT env $
+        when (coerce ideTesting) $
           LSP.sendNotification (LSP.SCustomMethod "ghcide/reference/ready") $
             toJSON $ fromNormalizedFilePath srcPath
       whenJust mdone $ \done ->
         modifyVar_ indexProgressToken $ \tok -> do
-          whenJust (lspEnv se) $ \env -> LSP.runLspT env $
+          whenJust (soeLspEnv soe) $ \env -> LSP.runLspT env $
             whenJust tok $ \tok ->
               LSP.sendNotification LSP.SProgress $ LSP.ProgressParams tok $
                 LSP.End $ LSP.WorkDoneProgressEndParams
@@ -990,12 +987,14 @@ indexHieFile se mod_summary srcPath !hash hf = do
 writeAndIndexHieFile :: HscEnv -> ShakeExtras -> ModSummary -> NormalizedFilePath -> [GHC.AvailInfo] -> HieASTs Type -> BS.ByteString -> IO [FileDiagnostic]
 writeAndIndexHieFile hscEnv se mod_summary srcPath exports ast source =
   handleGenerationErrors dflags "extended interface write/compression" $ do
+    IdeOptions{optProgressStyle, optTesting} <- getIdeOptionsIO se
     hf <- runHsc hscEnv $
       GHC.mkHieFile' mod_summary exports ast source
     atomicFileWrite se targetPath $ flip GHC.writeHieFile hf
     hash <- Util.getFileHash targetPath
-    indexHieFile se mod_summary srcPath hash hf
+    indexHieFile optProgressStyle optTesting soe targetPath srcPath hash hf
   where
+    soe          = getShakeOnlyExtras se
     dflags       = hsc_dflags hscEnv
     mod_location = ms_location mod_summary
     targetPath   = Compat.ml_hie_file mod_location

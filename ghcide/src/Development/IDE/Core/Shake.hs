@@ -28,6 +28,7 @@
 module Development.IDE.Core.Shake(
     IdeState, shakeSessionInit, shakeExtras, shakeDb,
     ShakeExtras(..), getShakeExtras, getShakeExtrasRules,
+    ShakeOnlyExtras(..), getShakeOnlyExtras,
     KnownTargets, Target(..), toKnownFiles,
     IdeRule, IdeResult,
     GetModificationTime(GetModificationTime, GetModificationTime_, missingFileDiagnostics),
@@ -297,6 +298,18 @@ data ShakeExtras = ShakeExtras
     , dirtyKeys :: TVar KeySet
       -- ^ Set of dirty rule keys since the last Shake run
     }
+
+-- Parts of ShakeExtras that we want to store in IdeGhcSession. This
+-- cannot include parts of ShakeExtras that are defined in
+-- Development.IDE.Types.Options, so that ShakeOnlyExtras can be
+-- defined in Development/IDE/Core/Share.hs-boot.
+data ShakeOnlyExtras = ShakeOnlyExtras
+    { soeHiedbWriter :: HieDbWriter -- ^ use to write
+    , soeLspEnv :: Maybe (LSP.LanguageContextEnv Config)
+    }
+
+getShakeOnlyExtras :: ShakeExtras -> ShakeOnlyExtras
+getShakeOnlyExtras ShakeExtras{..} = ShakeOnlyExtras hiedbWriter lspEnv
 
 type WithProgressFunc = forall a.
     T.Text -> LSP.ProgressCancellable -> ((LSP.ProgressAmount -> IO ()) -> IO a) -> IO a

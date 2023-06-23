@@ -867,7 +867,9 @@ getModIfaceFromDiskAndIndexRule recorder =
         -- can just re-index the file we read from disk
         Right hf -> liftIO $ do
           logWith recorder Logger.Debug $ LogReindexingHieFile f
-          indexHieFile se ms f hash hf
+          IdeOptions{optProgressStyle, optTesting} <- getIdeOptionsIO se
+          let soe = getShakeOnlyExtras se
+          indexHieFile optProgressStyle optTesting soe hie_loc f hash hf
 
   return (Just x)
 

@@ -27,7 +27,7 @@ import           Data.Typeable
 import           Development.IDE.GHC.Compat                   hiding
                                                               (HieFileResult)
 import           Development.IDE.GHC.Compat.Util
-import {-# SOURCE #-} Development.IDE.Core.Shake              (HieDbWriter)
+import {-# SOURCE #-} Development.IDE.Core.Shake              (ShakeOnlyExtras)
 import           Development.IDE.GHC.CoreFile
 import           Development.IDE.GHC.Util
 import           Development.IDE.Graph
@@ -507,7 +507,7 @@ type instance RuleResult GhcSessionIO = IdeGhcSession
 data IdeGhcSession = IdeGhcSession
   { loadSessionFun :: FilePath -> IO (IdeResult HscEnvEq, [FilePath])
   -- ^ Returns the Ghc session and the cradle dependencies
-  , sessionHiedbWriter :: HieDbWriter
+  , sessionShakeOnlyExtras :: ShakeOnlyExtras
   , sessionVersion :: !Int
   -- ^ Used as Shake key, versions must be unique and not reused
   }
