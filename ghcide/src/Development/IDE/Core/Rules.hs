@@ -769,6 +769,9 @@ ghcSessionDepsDefinition
 ghcSessionDepsDefinition fullModSummary GhcSessionDepsConfig{..} env file = do
     let hsc = hscEnv env
 
+    se <- getShakeExtras
+    let soe = getShakeOnlyExtras se
+    IdeOptions{optProgressStyle, optTesting} <- liftIO $ getIdeOptionsIO se
     mbdeps <- mapM(fmap artifactFilePath . snd) <$> use_ GetLocatedImports file
     case mbdeps of
         Nothing -> return Nothing
@@ -795,7 +798,7 @@ ghcSessionDepsDefinition fullModSummary GhcSessionDepsConfig{..} env file = do
 #endif
             session' <- liftIO $ mergeEnvs hsc moduleNode inLoadOrder depSessions
 
-            Just <$> liftIO (newHscEnvEqWithImportPaths (envImportPaths env) session' [])
+            Just <$> liftIO (newHscEnvEqWithImportPaths (envImportPaths env) optProgressStyle optTesting soe session' [])
 
 -- | Load a iface from disk, or generate it if there isn't one or it is out of date
 -- This rule also ensures that the `.hie` and `.o` (if needed) files are written out.

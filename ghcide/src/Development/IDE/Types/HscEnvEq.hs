@@ -21,12 +21,14 @@ import           Data.Set                        (Set)
 import qualified Data.Set                        as Set
 import           Data.Unique                     (Unique)
 import qualified Data.Unique                     as Unique
+import {-# SOURCE #-} Development.IDE.Core.Shake (ShakeOnlyExtras(..))
 import           Development.IDE.GHC.Compat
 import qualified Development.IDE.GHC.Compat.Util as Maybes
 import           Development.IDE.GHC.Error       (catchSrcErrors)
 import           Development.IDE.GHC.Util        (lookupPackageConfig)
 import           Development.IDE.Graph.Classes
 import           Development.IDE.Types.Exports   (ExportsMap, createExportsMap)
+import {-# SOURCE #-} Development.IDE.Types.Options (ProgressReportingStyle, IdeTesting)
 import           OpenTelemetry.Eventlog          (withSpan)
 import           System.Directory                (makeAbsolute)
 import           System.FilePath
@@ -52,8 +54,8 @@ data HscEnvEq = HscEnvEq
     }
 
 -- | Wrap an 'HscEnv' into an 'HscEnvEq'.
-newHscEnvEq :: FilePath -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
-newHscEnvEq cradlePath hscEnv0 deps = do
+newHscEnvEq :: FilePath -> ProgressReportingStyle -> IdeTesting -> ShakeOnlyExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+newHscEnvEq cradlePath optProgressStyle ideTesting soe hscEnv0 deps = do
     let relativeToCradle = (takeDirectory cradlePath </>)
         hscEnv = removeImportPaths hscEnv0
 
@@ -61,10 +63,10 @@ newHscEnvEq cradlePath hscEnv0 deps = do
     importPathsCanon <-
       mapM makeAbsolute $ relativeToCradle <$> importPaths (hsc_dflags hscEnv0)
 
-    newHscEnvEqWithImportPaths (Just $ Set.fromList importPathsCanon) hscEnv deps
+    newHscEnvEqWithImportPaths (Just $ Set.fromList importPathsCanon) optProgressStyle ideTesting soe hscEnv deps
 
-newHscEnvEqWithImportPaths :: Maybe (Set FilePath) -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
-newHscEnvEqWithImportPaths envImportPaths hscEnv deps = do
+newHscEnvEqWithImportPaths :: Maybe (Set FilePath) -> ProgressReportingStyle -> IdeTesting -> ShakeOnlyExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+newHscEnvEqWithImportPaths envImportPaths _optProgressStyle _ideTesting _soe hscEnv deps = do
 
     let dflags = hsc_dflags hscEnv
 
@@ -108,7 +110,7 @@ newHscEnvEqWithImportPaths envImportPaths hscEnv deps = do
 
 -- | Wrap an 'HscEnv' into an 'HscEnvEq'.
 newHscEnvEqPreserveImportPaths
-    :: HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+    :: ProgressReportingStyle -> IdeTesting -> ShakeOnlyExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
 newHscEnvEqPreserveImportPaths = newHscEnvEqWithImportPaths Nothing
 
 -- | Unwrap the 'HscEnv' with the original import paths.

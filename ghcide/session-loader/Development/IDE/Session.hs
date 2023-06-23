@@ -441,9 +441,10 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
   runningCradle <- newVar dummyAs :: IO (Var (Async (IdeResult HscEnvEq,[FilePath])))
 
   return $ do
-    extras@ShakeExtras{restartShakeSession, ideNc, knownTargetsVar, lspEnv, hiedbWriter
+    extras@ShakeExtras{restartShakeSession, ideNc, knownTargetsVar, lspEnv
                       } <- getShakeExtras
-    let invalidateShakeCache :: IO ()
+    let soe = getShakeOnlyExtras extras
+        invalidateShakeCache :: IO ()
         invalidateShakeCache = do
             void $ modifyVar' version succ
             join $ atomically $ recordDirtyKeys extras GhcSessionIO [emptyFilePath]
@@ -451,6 +452,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
     IdeOptions{ optTesting = IdeTesting optTesting
               , optCheckProject = getCheckProject
               , optExtensions
+              , optProgressStyle
               } <- getIdeOptions
 
         -- populate the knownTargetsVar with all the
@@ -584,7 +586,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
 
           -- New HscEnv for the component in question, returns the new HscEnvEq and
           -- a mapping from FilePath to the newly created HscEnvEq.
-          let new_cache = newComponentCache recorder optExtensions hieYaml _cfp hscEnv uids
+          let new_cache = newComponentCache recorder optProgressStyle (IdeTesting optTesting) soe optExtensions hieYaml _cfp hscEnv uids
           (cs, res) <- new_cache new
           -- Modified cache targets for everything else in the hie.yaml file
           -- which now uses the same EPS and so on
@@ -700,7 +702,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
             sessionOpts (join cachedHieYamlLocation <|> hieYaml, file) `Safe.catch` \e ->
                 return (([renderPackageSetupException file e], Nothing), maybe [] pure hieYaml)
 
-    returnWithVersion (getShakeOnlyExtras extras) $ \file -> do
+    returnWithVersion soe $ \file -> do
       opts <- liftIO $ join $ mask_ $ modifyVar runningCradle $ \as -> do
         -- If the cradle is not finished, then wait for it to finish.
         void $ wait as
@@ -792,6 +794,9 @@ setNameCache nc hsc = hsc { hsc_NC = nc }
 -- | Create a mapping from FilePaths to HscEnvEqs
 newComponentCache
          :: Recorder (WithPriority Log)
+         -> ProgressReportingStyle
+         -> IdeTesting
+         -> ShakeOnlyExtras
          -> [String]       -- File extensions to consider
          -> Maybe FilePath -- Path to cradle
          -> NormalizedFilePath -- Path to file that caused the creation of this component
@@ -799,7 +804,7 @@ newComponentCache
          -> [(UnitId, DynFlags)]
          -> ComponentInfo
          -> IO ( [TargetDetails], (IdeResult HscEnvEq, DependencyInfo))
-newComponentCache recorder exts cradlePath cfp hsc_env uids ci = do
+newComponentCache recorder optProgressStyle ideTesting soe exts cradlePath cfp hsc_env uids ci = do
     let df = componentDynFlags ci
     hscEnv' <-
 #if MIN_VERSION_ghc(9,3,0)
@@ -822,7 +827,7 @@ newComponentCache recorder exts cradlePath cfp hsc_env uids ci = do
 #endif
 
     let newFunc = maybe newHscEnvEqPreserveImportPaths newHscEnvEq cradlePath
-    henv <- newFunc hscEnv' uids
+    henv <- newFunc optProgressStyle ideTesting soe hscEnv' uids
     let targetEnv = ([], Just henv)
         targetDepends = componentDependencyInfo ci
         res = (targetEnv, targetDepends)
