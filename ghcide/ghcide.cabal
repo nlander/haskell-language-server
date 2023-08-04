@@ -68,7 +68,7 @@ library
         hls-plugin-api == 2.1.0.0,
         lens,
         list-t,
-        hiedb == 0.4.3.*,
+        hiedb ^>= 0.4.3.0,
         lsp-types ^>= 2.0.1.0,
         lsp ^>= 2.1.0.0 ,
         mtl,
@@ -150,6 +150,7 @@ library
         Development.IDE.Core.Actions
         Development.IDE.Main.HeapStats
         Development.IDE.Core.Debouncer
+        Development.IDE.Core.Dependencies
         Development.IDE.Core.FileStore
         Development.IDE.Core.FileUtils
         Development.IDE.Core.IdeConfiguration
