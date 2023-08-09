@@ -19,6 +19,7 @@ module Development.IDE.GHC.Compat.Units (
     -- * UnitInfoMap
     UnitInfoMap,
     getUnitInfoMap,
+    getUnitInfo,
     lookupUnit,
     lookupUnit',
     -- * UnitInfo
@@ -26,7 +27,7 @@ module Development.IDE.GHC.Compat.Units (
     unitExposedModules,
     unitHiddenModules,
     unitLibraryDirs,
-    UnitInfo.unitId,
+    unitId,
     unitDepends,
     unitHaddockInterfaces,
     unitInfoId,
@@ -45,6 +46,7 @@ module Development.IDE.GHC.Compat.Units (
     installedModule,
     -- * Module
     toUnitId,
+    fromUnitId,
     Development.IDE.GHC.Compat.Units.moduleUnitId,
     moduleUnit,
     -- * ExternalPackageState
@@ -268,6 +270,16 @@ getUnitInfoMap =
   Packages.getPackageConfigMap . hsc_dflags
 #endif
 
+getUnitInfo :: HscEnv -> [UnitInfo]
+getUnitInfo =
+#if MIN_VERSION_ghc(9,2,0)
+  State.listUnitInfo . ue_units . hsc_unit_env
+#elif MIN_VERSION_ghc(9,0,0)
+  State.listUnitInfo . unitState
+#else
+  Packages.listPackageConfigMap . hsc_dflags
+#endif
+
 lookupUnit :: HscEnv -> Unit -> Maybe UnitInfo
 #if MIN_VERSION_ghc(9,0,0)
 lookupUnit env pid = State.lookupUnit (unitState env) pid
@@ -292,7 +304,13 @@ preloadClosureUs = const ()
 #endif
 
 unitLibraryDirs :: UnitInfo -> [FilePath]
+#if MIN_VERSION_ghc(9,2,0)
 unitLibraryDirs = fmap ST.unpack . UnitInfo.unitLibraryDirs
+#elif MIN_VERSION_ghc(9,0,0)
+unitLibraryDirs = UnitInfo.unitLibraryDirs
+#else
+unitLibraryDirs = Packages.libraryDirs
+#endif
 
 unitExposedModules :: UnitInfo -> [(ModuleName, Maybe Module)]
 unitExposedModules ue =
@@ -303,7 +321,11 @@ unitExposedModules ue =
 #endif
 
 unitHiddenModules :: UnitInfo -> [ModuleName]
+#if MIN_VERSION_ghc(9,0,0)
 unitHiddenModules = UnitInfo.unitHiddenModules
+#else
+unitHiddenModules = Packages.hiddenModules
+#endif
 
 unitDepends :: UnitInfo -> [UnitId]
 #if MIN_VERSION_ghc(9,0,0)
@@ -384,10 +406,25 @@ installedModule :: UnitId -> ModuleName -> Module.InstalledModule
 installedModule uid modname = Module.InstalledModule (Module.toInstalledUnitId uid) modname
 #endif
 
+unitId :: UnitInfo -> UnitId
+#if MIN_VERSION_ghc(9,0,0)
+unitId = UnitInfo.unitId
+#else
+unitId = Packages.packageConfigId
+#endif
+
 toUnitId :: Unit -> UnitId
 toUnitId =
 #if MIN_VERSION_ghc(9,0,0)
     Unit.toUnitId
+#else
+    id
+#endif
+
+fromUnitId :: UnitId -> Unit
+fromUnitId =
+#if MIN_VERSION_ghc(9,0,0)
+    RealUnit . Definite
 #else
     id
 #endif
