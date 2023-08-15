@@ -1,0 +1,4 @@
+packages: ./dependency-new
+          ./dependency-old
+package *
+  ghc-options: -fwrite-ide-info
