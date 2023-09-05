@@ -77,8 +77,23 @@ indexDependencyHieFiles recorder se hscEnv = do
     -- In this case, delete the indexed source files for all
     -- dependencies that are already indexed.
     unless dotHlsDirExists deleteMissingDependencySources
-    -- Index all dependency HIE files in the HieDb database.
-    void $ Map.traverseWithKey indexPackageHieFiles packagesWithModules
+    -- Check that we are using a new enough version of cabal.
+    let isUsingNewEnoughCabal = checkCabalForDependencyHieCapability se
+        hasFwriteIdeInfoEnabled = checkHscEnvForFwriteIdeInfo hscEnv
+    if isUsingNewEnoughCabal && hasFwriteIdeInfoEnabled
+    then do
+      let isUsingNewEnoughGhc = checkGhcForDepencencyHieCapability se
+          doIndexing = void $ Map.traverseWithKey indexPackageHieFiles packagesWithModules
+      if isUsingNewEnoughGhc
+           -- Index all dependency HIE files in the HieDb database.
+      then doIndexing
+      else do
+        sendWarningMessage se True incompatibleGhcWarning
+        -- Index all dependency HIE files in the HieDb database.
+        doIndexing
+    else do
+      sendWarningMessage se isUsingNewEnoughCabal incompatibleCabalWarning
+      sendWarningMessage se hasFwriteIdeInfoEnabled missingFwriteIdeInfoWarning
     where
         mHlsDir :: Maybe FilePath
         mHlsDir = do
@@ -156,6 +171,36 @@ indexDependencyHieFiles recorder se hscEnv = do
                     $ map GHC.toUnitId
                     $ GHC.explicitUnits
                     $ GHC.unitState hscEnv
+
+sendWarningMessage
+  :: ShakeExtras
+  -> Bool
+  -> Text
+  -> IO ()
+sendWarningMessage se shouldSend warning = case lspEnv se of
+  Nothing -> pure ()
+  Just env ->
+  if shouldSend
+  then LSP.runLspT env $ do
+    LSP.sendNotification LSP.SMethod_WindowShowMessage $
+      LSP.ShowMessageParams LSP.MessageType_Warning warning
+  else pure ()
+
+incompatibleCabalWarning :: Text
+incompatibleCabalWarning = T.unwords
+  [ "Goto definition will not work for dependencies with this version of cabal-install."
+  , "Please ensure that you are using cabal-install version 3.11 or later."
+  ]
+
+incompatibleGhcWarning :: Text
+incompatibleGhcWarning = T.unwords
+  -- We should update this message when a version of GHC ships
+  -- that supports distributing .hie files with the packages
+  -- GHC ships with.
+  [ "Goto definition will not work for the dependencies that ship with GHC."
+  , "Goto definition is expected to be supported for these dependencies"
+  , "starting with GHC 9.10"
+  ]
 
 -- calculateTransitiveDependencies finds the UnitId keys in the UnitInfoMap
 -- that are dependencies or transitive dependencies.
