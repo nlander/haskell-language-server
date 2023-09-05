@@ -4,18 +4,21 @@ module Development.IDE.Core.Dependencies
 
 import           Control.Concurrent.STM         (atomically)
 import           Control.Concurrent.STM.TQueue  (writeTQueue)
-import           Control.Monad                  (unless, void)
+import           Control.Monad                  (unless, void, when)
 import           Data.Foldable                  (traverse_)
 import qualified Data.Map                       as Map
 import           Data.Maybe                     (isNothing)
 import           Data.Set                       (Set)
 import qualified Data.Set                       as Set
+import           Data.Text                      (Text)
+import qualified Data.Text                      as T
 import           Development.IDE.Core.Compile   (indexHieFile)
 import           Development.IDE.Core.Rules     (HieFileCheck (..), Log,
                                                  checkHieFile)
 import           Development.IDE.Core.Shake     (HieDbWriter (indexQueue),
                                                  ShakeExtras (hiedbWriter, lspEnv, withHieDb))
 import qualified Development.IDE.GHC.Compat     as GHC
+import qualified Development.IDE.GHC.Compat.Util as GHC
 import           Development.IDE.Types.Location (NormalizedFilePath,
                                                  toNormalizedFilePath')
 import           HieDb                          (SourceFile (FakeFile),
@@ -23,7 +26,9 @@ import           HieDb                          (SourceFile (FakeFile),
                                                  removeDependencySrcFiles)
 import           Ide.Logger                     (Recorder, WithPriority)
 import           Ide.Types                      (hlsDirectory)
-import           Language.LSP.Server            (resRootPath)
+import qualified Language.LSP.Protocol.Message  as LSP
+import qualified Language.LSP.Protocol.Types    as LSP
+import qualified Language.LSP.Server            as LSP
 import           System.Directory               (doesDirectoryExist)
 import           System.FilePath                ((<.>), (</>))
 
@@ -97,7 +102,7 @@ indexDependencyHieFiles recorder se hscEnv = do
     where
         mHlsDir :: Maybe FilePath
         mHlsDir = do
-            projectDir <- resRootPath =<< lspEnv se
+            projectDir <- LSP.resRootPath =<< lspEnv se
             pure $ projectDir </> hlsDirectory
         -- Add the deletion of dependency source files from the
         -- HieDb database to the database write queue.
@@ -172,6 +177,12 @@ indexDependencyHieFiles recorder se hscEnv = do
                     $ GHC.explicitUnits
                     $ GHC.unitState hscEnv
 
+checkHscEnvForFwriteIdeInfo :: GHC.HscEnv -> Bool
+checkHscEnvForFwriteIdeInfo env = GHC.Opt_WriteHie `elem` generalFlags
+  where
+    generalFlags :: [GHC.GeneralFlag]
+    generalFlags = GHC.toList $ GHC.generalFlags $ GHC.extractDynFlags env
+
 sendWarningMessage
   :: ShakeExtras
   -> Bool
@@ -179,17 +190,22 @@ sendWarningMessage
   -> IO ()
 sendWarningMessage se shouldSend warning = case lspEnv se of
   Nothing -> pure ()
-  Just env ->
-  if shouldSend
-  then LSP.runLspT env $ do
-    LSP.sendNotification LSP.SMethod_WindowShowMessage $
-      LSP.ShowMessageParams LSP.MessageType_Warning warning
-  else pure ()
+  Just env -> when shouldSend $ LSP.runLspT env $ do
+      LSP.sendNotification LSP.SMethod_WindowShowMessage $
+        LSP.ShowMessageParams LSP.MessageType_Warning warning
 
 incompatibleCabalWarning :: Text
 incompatibleCabalWarning = T.unwords
   [ "Goto definition will not work for dependencies with this version of cabal-install."
-  , "Please ensure that you are using cabal-install version 3.11 or later."
+  , "Please ensure that you are using cabal-install version 3.11 or later"
+  , "and restart the language server."
+  ]
+
+missingFwriteIdeInfoWarning :: Text
+missingFwriteIdeInfoWarning = T.unwords
+  [ "Goto definition will not work for dependencies without the -fwrite-ide-info ghc flag."
+  , "Please enable ghc-options: -fwrite-ide-info in your cabal.project"
+  , "or in your global cabal/config and restart the language server."
   ]
 
 incompatibleGhcWarning :: Text
@@ -199,7 +215,7 @@ incompatibleGhcWarning = T.unwords
   -- GHC ships with.
   [ "Goto definition will not work for the dependencies that ship with GHC."
   , "Goto definition is expected to be supported for these dependencies"
-  , "starting with GHC 9.10"
+  , "starting with GHC 9.10."
   ]
 
 -- calculateTransitiveDependencies finds the UnitId keys in the UnitInfoMap
