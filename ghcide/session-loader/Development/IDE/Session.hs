@@ -57,6 +57,7 @@ import           Development.IDE.GHC.Compat.Core      hiding (Target,
                                                        TargetFile, TargetModule,
                                                        Var, Warning, getOptions)
 import qualified Development.IDE.GHC.Compat.Core      as GHC
+import qualified Development.IDE.GHC.Compat.Util      as GHC
 import           Development.IDE.GHC.Compat.Env       hiding (Logger)
 import           Development.IDE.GHC.Compat.Units     (UnitId)
 import           Development.IDE.GHC.Util
@@ -486,11 +487,11 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
     -- combined with the components in the old HscEnv into a new HscEnv
     -- which contains the union.
     let packageSetup :: (Maybe FilePath, NormalizedFilePath, ComponentOptions, FilePath)
-                     -> IO (HscEnv, ComponentInfo, [ComponentInfo])
+                     -> IO (HscEnv, ComponentInfo, [ComponentInfo], Bool)
         packageSetup (hieYaml, cfp, opts, libDir) = do
           -- Parse DynFlags for the newly discovered component
           hscEnv <- emptyHscEnv ideNc libDir
-          (df', targets) <- evalGhcEnv hscEnv $ setOptions opts (hsc_dflags hscEnv)
+          (df', targets, hasFwriteIdeInfoEnabled) <- evalGhcEnv hscEnv $ setOptions opts (hsc_dflags hscEnv)
           let df =
 #if MIN_VERSION_ghc(9,3,0)
                 case unitIdString (homeUnitId_ df') of
@@ -577,13 +578,13 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
               -- . The information for the new component which caused this cache miss
               -- . The modified information (without -inplace flags) for
               --   existing packages
-              pure (Map.insert hieYaml (newHscEnv, new_deps) m, (newHscEnv, head new_deps', tail new_deps'))
+              pure (Map.insert hieYaml (newHscEnv, new_deps) m, (newHscEnv, head new_deps', tail new_deps', hasFwriteIdeInfoEnabled))
 
 
     let session :: (Maybe FilePath, NormalizedFilePath, ComponentOptions, FilePath)
                 -> IO (IdeResult HscEnvEq,[FilePath])
         session args@(hieYaml, _cfp, _opts, _libDir) = do
-          (hscEnv, new, old_deps) <- packageSetup args
+          (hscEnv, new, old_deps, hasFwriteIdeInfoEnabled) <- packageSetup args
 
           -- Whenever we spin up a session on Linux, dynamically load libm.so.6
           -- in. We need this in case the binary is statically linked, in which
@@ -610,7 +611,7 @@ loadSessionWithOptions recorder SessionLoadingOptions{..} dir = do
 
           -- New HscEnv for the component in question, returns the new HscEnvEq and
           -- a mapping from FilePath to the newly created HscEnvEq.
-          let new_cache = newComponentCache recorder extras optExtensions hieYaml _cfp hscEnv uids
+          let new_cache = newComponentCache recorder extras optExtensions hieYaml _cfp hscEnv hasFwriteIdeInfoEnabled uids
           (cs, res) <- new_cache new
           -- Modified cache targets for everything else in the hie.yaml file
           -- which now uses the same EPS and so on
@@ -821,10 +822,11 @@ newComponentCache
          -> Maybe FilePath -- Path to cradle
          -> NormalizedFilePath -- Path to file that caused the creation of this component
          -> HscEnv
+         -> Bool -- Is -fwrite-ide-info enabled?
          -> [(UnitId, DynFlags)]
          -> ComponentInfo
          -> IO ( [TargetDetails], (IdeResult HscEnvEq, DependencyInfo))
-newComponentCache recorder extras exts cradlePath cfp hsc_env uids ci = do
+newComponentCache recorder extras exts cradlePath cfp hsc_env hasFwriteIdeInfoEnabled uids ci = do
     let df = componentDynFlags ci
     hscEnv' <-
 #if MIN_VERSION_ghc(9,3,0)
@@ -847,7 +849,7 @@ newComponentCache recorder extras exts cradlePath cfp hsc_env uids ci = do
 #endif
 
     let newFunc = maybe newHscEnvEqPreserveImportPaths newHscEnvEq cradlePath
-    henv <- newFunc (cmapWithPrio LogRules recorder) extras hscEnv' uids
+    henv <- newFunc (cmapWithPrio LogRules recorder) extras hasFwriteIdeInfoEnabled hscEnv' uids
     let targetEnv = ([], Just henv)
         targetDepends = componentDependencyInfo ci
         res = (targetEnv, targetDepends)
@@ -1103,10 +1105,12 @@ memoIO op = do
             Just res -> return (mp, res)
 
 -- | Throws if package flags are unsatisfiable
-setOptions :: GhcMonad m => ComponentOptions -> DynFlags -> m (DynFlags, [GHC.Target])
+setOptions :: GhcMonad m => ComponentOptions -> DynFlags -> m (DynFlags, [GHC.Target], Bool)
 setOptions (ComponentOptions theOpts compRoot _) dflags = do
     (dflags', targets') <- addCmdOpts theOpts dflags
     let targets = makeTargetsAbsolute compRoot targets'
+    let gflags' = GHC.toList $ generalFlags dflags'
+    let hasFwriteIdeInfoEnabled = Opt_WriteHie `elem` gflags'
     let dflags'' =
           disableWarningsAsErrors $
           -- disabled, generated directly by ghcide instead
@@ -1126,7 +1130,7 @@ setOptions (ComponentOptions theOpts compRoot _) dflags = do
     -- For GHC >= 9.2, we need to modify the unit env in the hsc_dflags, which
     -- is done later in newComponentCache
     final_flags <- liftIO $ wrapPackageSetupException $ Compat.oldInitUnits dflags''
-    return (final_flags, targets)
+    return (final_flags, targets, hasFwriteIdeInfoEnabled)
 
 setIgnoreInterfacePragmas :: DynFlags -> DynFlags
 setIgnoreInterfacePragmas df =

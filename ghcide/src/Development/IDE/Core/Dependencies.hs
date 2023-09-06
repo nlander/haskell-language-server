@@ -74,8 +74,8 @@ instance Ord Package where
 
 -- indexDependencyHieFiles gets all of the direct and transitive dependencies
 -- from the HscEnv and indexes their HIE files in the HieDb.
-indexDependencyHieFiles :: Recorder (WithPriority Log) -> ShakeExtras -> GHC.HscEnv -> IO ()
-indexDependencyHieFiles recorder se hscEnv = do
+indexDependencyHieFiles :: Recorder (WithPriority Log) -> ShakeExtras -> Bool -> GHC.HscEnv -> IO ()
+indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv = do
     -- Check whether the .hls directory exists.
     dotHlsDirExists <- maybe (pure False) doesDirectoryExist mHlsDir
     -- If the .hls directory does not exits, it may have been deleted.
@@ -84,7 +84,6 @@ indexDependencyHieFiles recorder se hscEnv = do
     unless dotHlsDirExists deleteMissingDependencySources
     -- Check that we are using a new enough version of cabal.
     let isUsingNewEnoughCabal = checkCabalForDependencyHieCapability se
-        hasFwriteIdeInfoEnabled = checkHscEnvForFwriteIdeInfo hscEnv
     if isUsingNewEnoughCabal && hasFwriteIdeInfoEnabled
     then do
       let isUsingNewEnoughGhc = checkGhcForDepencencyHieCapability se
@@ -97,8 +96,8 @@ indexDependencyHieFiles recorder se hscEnv = do
         -- Index all dependency HIE files in the HieDb database.
         doIndexing
     else do
-      sendWarningMessage se isUsingNewEnoughCabal incompatibleCabalWarning
-      sendWarningMessage se hasFwriteIdeInfoEnabled missingFwriteIdeInfoWarning
+      sendWarningMessage se (not isUsingNewEnoughCabal) incompatibleCabalWarning
+      sendWarningMessage se (not hasFwriteIdeInfoEnabled) missingFwriteIdeInfoWarning
     where
         mHlsDir :: Maybe FilePath
         mHlsDir = do
@@ -177,11 +176,11 @@ indexDependencyHieFiles recorder se hscEnv = do
                     $ GHC.explicitUnits
                     $ GHC.unitState hscEnv
 
-checkHscEnvForFwriteIdeInfo :: GHC.HscEnv -> Bool
-checkHscEnvForFwriteIdeInfo env = GHC.Opt_WriteHie `elem` generalFlags
-  where
-    generalFlags :: [GHC.GeneralFlag]
-    generalFlags = GHC.toList $ GHC.generalFlags $ GHC.extractDynFlags env
+checkCabalForDependencyHieCapability :: ShakeExtras -> Bool
+checkCabalForDependencyHieCapability = const True
+
+checkGhcForDepencencyHieCapability :: ShakeExtras -> Bool
+checkGhcForDepencencyHieCapability = const False
 
 sendWarningMessage
   :: ShakeExtras

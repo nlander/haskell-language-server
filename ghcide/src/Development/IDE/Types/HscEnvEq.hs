@@ -64,8 +64,8 @@ updateHscEnvEq oldHscEnvEq newHscEnv = do
   update <$> Unique.newUnique
 
 -- | Wrap an 'HscEnv' into an 'HscEnvEq'.
-newHscEnvEq :: FilePath -> Recorder (WithPriority Log) -> ShakeExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
-newHscEnvEq cradlePath recorder se hscEnv0 deps = do
+newHscEnvEq :: FilePath -> Recorder (WithPriority Log) -> ShakeExtras -> Bool -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+newHscEnvEq cradlePath recorder se hasFwriteIdeInfoEnabled hscEnv0 deps = do
     let relativeToCradle = (takeDirectory cradlePath </>)
         hscEnv = removeImportPaths hscEnv0
 
@@ -73,11 +73,11 @@ newHscEnvEq cradlePath recorder se hscEnv0 deps = do
     importPathsCanon <-
       mapM makeAbsolute $ relativeToCradle <$> importPaths (hsc_dflags hscEnv0)
 
-    newHscEnvEqWithImportPaths (Just $ Set.fromList importPathsCanon) recorder se hscEnv deps
+    newHscEnvEqWithImportPaths (Just $ Set.fromList importPathsCanon) recorder se hasFwriteIdeInfoEnabled hscEnv deps
 
-newHscEnvEqWithImportPaths :: Maybe (Set FilePath) -> Recorder (WithPriority Log) -> ShakeExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
-newHscEnvEqWithImportPaths envImportPaths recorder se hscEnv deps = do
-    _ <- async $ indexDependencyHieFiles recorder se hscEnv
+newHscEnvEqWithImportPaths :: Maybe (Set FilePath) -> Recorder (WithPriority Log) -> ShakeExtras -> Bool -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+newHscEnvEqWithImportPaths envImportPaths recorder se hasFwriteIdeInfoEnabled hscEnv deps = do
+    _ <- async $ indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv
 
     let dflags = hsc_dflags hscEnv
 
@@ -121,7 +121,7 @@ newHscEnvEqWithImportPaths envImportPaths recorder se hscEnv deps = do
 
 -- | Wrap an 'HscEnv' into an 'HscEnvEq'.
 newHscEnvEqPreserveImportPaths
-    :: Recorder (WithPriority Log) -> ShakeExtras -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
+    :: Recorder (WithPriority Log) -> ShakeExtras -> Bool -> HscEnv -> [(UnitId, DynFlags)] -> IO HscEnvEq
 newHscEnvEqPreserveImportPaths = newHscEnvEqWithImportPaths Nothing
 
 -- | Unwrap the 'HscEnv' with the original import paths.
