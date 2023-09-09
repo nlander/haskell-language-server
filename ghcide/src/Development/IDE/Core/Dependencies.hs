@@ -16,7 +16,7 @@ import           Development.IDE.Core.Compile   (indexHieFile)
 import           Development.IDE.Core.Rules     (HieFileCheck (..), Log,
                                                  checkHieFile)
 import           Development.IDE.Core.Shake     (HieDbWriter (indexQueue),
-                                                 ShakeExtras (hiedbWriter, lspEnv, withHieDb, logger))
+                                                 ShakeExtras (hiedbWriter, lspEnv, withHieDb))
 import qualified Development.IDE.GHC.Compat     as GHC
 import qualified Development.IDE.GHC.Compat.Util as GHC
 import           Development.IDE.Types.Location (NormalizedFilePath,
@@ -24,7 +24,7 @@ import           Development.IDE.Types.Location (NormalizedFilePath,
 import           HieDb                          (SourceFile (FakeFile),
                                                  lookupPackage,
                                                  removeDependencySrcFiles)
-import           Ide.Logger                     (Recorder, WithPriority, logDebug)
+import           Ide.Logger                     (Recorder, WithPriority)
 import           Ide.Types                      (hlsDirectory)
 import qualified Language.LSP.Protocol.Message  as LSP
 import qualified Language.LSP.Protocol.Types    as LSP
@@ -84,9 +84,6 @@ indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv = do
     unless dotHlsDirExists deleteMissingDependencySources
     -- Check that we are using a new enough version of cabal.
     let isUsingNewEnoughCabal = checkCabalForDependencyHieCapability se
-    logDebug (logger se) $ "\n\n!!!!!!!!!!!\nIsUsingNewEnoughCabal: " <> T.pack (show isUsingNewEnoughCabal)
-      <> "\nHasFwriteIdeInfoEnabled: " <> T.pack (show hasFwriteIdeInfoEnabled)
-      <> "\n!!!!!!!!!!!\n"
     if isUsingNewEnoughCabal && hasFwriteIdeInfoEnabled
     then do
       let isUsingNewEnoughGhc = checkGhcForDepencencyHieCapability se
@@ -99,7 +96,6 @@ indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv = do
         -- Index all dependency HIE files in the HieDb database.
         doIndexing
     else do
-      logDebug (logger se) "\n\n!!!!!!!!!!!!\nMade it to non-indexing warning message block!\n!!!!!!!!!!\n"
       sendWarningMessage se (not isUsingNewEnoughCabal) incompatibleCabalWarning
       sendWarningMessage se (not hasFwriteIdeInfoEnabled) missingFwriteIdeInfoWarning
     where
@@ -192,11 +188,8 @@ sendWarningMessage
   -> Text
   -> IO ()
 sendWarningMessage se shouldSend warning = case lspEnv se of
-  Nothing -> logDebug (logger se) "\n\n!!!!!!!!!!!!\nNoLspEnv\n!!!!!!!!!!\n"
-  Just env -> when shouldSend $ do
-    logDebug (logger se) $ "\n\n!!!!!!!!!!!\nSending Warning: "
-      <> warning <> "\n!!!!!!!!!!\n"
-    LSP.runLspT env $
+  Nothing -> pure ()
+  Just env -> when shouldSend $ LSP.runLspT env $ do
       LSP.sendNotification LSP.SMethod_WindowShowMessage $
         LSP.ShowMessageParams LSP.MessageType_Warning warning
 
