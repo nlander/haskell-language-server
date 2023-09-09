@@ -7,11 +7,12 @@ import           Control.Concurrent.STM.TQueue  (writeTQueue)
 import           Control.Monad                  (unless, void, when)
 import           Data.Foldable                  (traverse_)
 import qualified Data.Map                       as Map
-import           Data.Maybe                     (isNothing)
+import           Data.Maybe                     (isNothing, listToMaybe)
 import           Data.Set                       (Set)
 import qualified Data.Set                       as Set
 import           Data.Text                      (Text)
 import qualified Data.Text                      as T
+import           Data.Version                   (Version, makeVersion, parseVersion)
 import           Development.IDE.Core.Compile   (indexHieFile)
 import           Development.IDE.Core.Rules     (HieFileCheck (..), Log,
                                                  checkHieFile)
@@ -29,8 +30,11 @@ import           Ide.Types                      (hlsDirectory)
 import qualified Language.LSP.Protocol.Message  as LSP
 import qualified Language.LSP.Protocol.Types    as LSP
 import qualified Language.LSP.Server            as LSP
-import           System.Directory               (doesDirectoryExist)
+import           System.Directory               (doesDirectoryExist, findExecutable)
+import           System.Exit                    (ExitCode (ExitSuccess))
 import           System.FilePath                ((<.>), (</>))
+import           System.Process                 (readProcessWithExitCode)
+import           Text.ParserCombinators.ReadP   (ReadP, readP_to_S, skipSpaces)
 
 {- Note [Going to definitions in dependencies]
  - There are two main components of the functionality that enables gotoDefinition for
@@ -83,11 +87,11 @@ indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv = do
     -- dependencies that are already indexed.
     unless dotHlsDirExists deleteMissingDependencySources
     -- Check that we are using a new enough version of cabal.
-    let isUsingNewEnoughCabal = checkCabalForDependencyHieCapability se
+    isUsingNewEnoughCabal <- checkCabalForDependencyHieCapability
     if isUsingNewEnoughCabal && hasFwriteIdeInfoEnabled
     then do
-      let isUsingNewEnoughGhc = checkGhcForDepencencyHieCapability se
-          doIndexing = void $ Map.traverseWithKey indexPackageHieFiles packagesWithModules
+      isUsingNewEnoughGhc <- checkGhcForDepencencyHieCapability
+      let doIndexing = void $ Map.traverseWithKey indexPackageHieFiles packagesWithModules
       if isUsingNewEnoughGhc
            -- Index all dependency HIE files in the HieDb database.
       then doIndexing
@@ -176,11 +180,48 @@ indexDependencyHieFiles recorder se hasFwriteIdeInfoEnabled hscEnv = do
                     $ GHC.explicitUnits
                     $ GHC.unitState hscEnv
 
-checkCabalForDependencyHieCapability :: ShakeExtras -> Bool
-checkCabalForDependencyHieCapability = const True
+-- | Find the version of the given program.
+-- Assumes the program accepts the cli argument "--numeric-version".
+-- If the invocation has a non-zero exit-code, we return 'Nothing'
+-- (This and mkVersion are copied from src/Ide/Version.hs)
+-- TODO: consider adding this module as a depencency in
+-- src/Ide/Version.hs to avoid this code duplication.
+findVersionOf :: FilePath -> IO (Maybe Version)
+findVersionOf tool =
+  findExecutable tool >>= \case
+    Nothing -> pure Nothing
+    Just path ->
+      readProcessWithExitCode path ["--numeric-version"] "" >>= \case
+        (ExitSuccess, sout, _) -> pure $ mkVersion sout
+        _                      -> pure Nothing
 
-checkGhcForDepencencyHieCapability :: ShakeExtras -> Bool
-checkGhcForDepencencyHieCapability = const False
+mkVersion :: String -> Maybe Version
+mkVersion = consumeParser myVersionParser
+  where
+    myVersionParser = do
+      skipSpaces
+      version <- parseVersion
+      skipSpaces
+      pure version
+
+    consumeParser :: ReadP a -> String -> Maybe a
+    consumeParser p input =
+      listToMaybe $ map fst . filter (null . snd) $ readP_to_S p input
+
+checkCabalForDependencyHieCapability :: IO Bool
+checkCabalForDependencyHieCapability = do
+    mCabalVersion <- findVersionOf "cabal"
+    case mCabalVersion of
+        Nothing -> pure False
+        Just cabalVersion ->
+            pure $ cabalVersion >= makeVersion [3,11]
+
+-- TODO: Once a version of GHC has been released that ships
+-- with generated HIE files we need to update this to work
+-- like checkCabalForDependencyHieCapability,
+-- using findVersionOf.
+checkGhcForDepencencyHieCapability :: IO Bool
+checkGhcForDepencencyHieCapability = pure False
 
 sendWarningMessage
   :: ShakeExtras
@@ -189,7 +230,7 @@ sendWarningMessage
   -> IO ()
 sendWarningMessage se shouldSend warning = case lspEnv se of
   Nothing -> pure ()
-  Just env -> when shouldSend $ LSP.runLspT env $ do
+  Just env -> when shouldSend $ LSP.runLspT env $
       LSP.sendNotification LSP.SMethod_WindowShowMessage $
         LSP.ShowMessageParams LSP.MessageType_Warning warning
 
@@ -209,7 +250,7 @@ missingFwriteIdeInfoWarning = T.unwords
 
 incompatibleGhcWarning :: Text
 incompatibleGhcWarning = T.unwords
-  -- We should update this message when a version of GHC ships
+  -- TODO: We should update this message when a version of GHC ships
   -- that supports distributing .hie files with the packages
   -- GHC ships with.
   [ "Goto definition will not work for the dependencies that ship with GHC."
